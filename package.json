@@ -1,0 +1,28 @@
+{
+  "name": "portal-automation-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "bin": "index.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect",
+    "build": "pkg . --targets node18-win-x64 --output RpaBot.exe"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/tesseract.js/**/*",
+      "node_modules/tesseract.js-core/**/*"
+    ]
+  },
+  "dependencies": {
+    "@google/genai": "^2.7.0",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "playwright": "^1.60.0",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1"
+  }
+}

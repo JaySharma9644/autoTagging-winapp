@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoTagging Bot</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────── -->
+<header>
+    <div class="logo">🤖</div>
+    <div class="header-title">
+        <h1>AutoTagging Bot</h1>
+        <p>Vehicle portal automation</p>
+    </div>
+    <div class="status-badge idle" id="statusBadge">
+        <span class="status-dot"></span>
+        <span id="statusText">Idle</span>
+    </div>
+</header>
+
+<!-- ── Tab bar ────────────────────────────────────────── -->
+<div class="tabs">
+    <button class="tab-btn active" data-tab="dashboard">⚡ Dashboard</button>
+    <button class="tab-btn"        data-tab="settings">⚙️ Settings</button>
+    <button class="tab-btn"        data-tab="history">📋 History</button>
+</div>
+
+<!-- ══════════════════ DASHBOARD TAB ══════════════════ -->
+<div class="tab-content active" id="tab-dashboard">
+
+    <!-- Controls -->
+    <div class="control-row">
+        <button class="btn btn-start" id="btnStart">▶ Start</button>
+        <button class="btn btn-stop"  id="btnStop" disabled>■ Stop</button>
+        <button class="btn btn-clear" id="btnClear">✕ Clear logs</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+        <div class="stat-card total">
+            <div class="num" id="statTotal">0</div>
+            <div class="lbl">Total</div>
+        </div>
+        <div class="stat-card success">
+            <div class="num" id="statSuccess">0</div>
+            <div class="lbl">Tagged</div>
+        </div>
+        <div class="stat-card skipped">
+            <div class="num" id="statSkipped">0</div>
+            <div class="lbl">Skipped</div>
+        </div>
+        <div class="stat-card failed">
+            <div class="num" id="statFailed">0</div>
+            <div class="lbl">Failed</div>
+        </div>
+    </div>
+
+    <!-- Log area -->
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div class="log-header">
+            <span class="log-title">Live Logs</span>
+        </div>
+        <div class="log-box" id="logBox"></div>
+    </div>
+
+</div>
+
+<!-- ══════════════════ SETTINGS TAB ══════════════════ -->
+<div class="tab-content" id="tab-settings">
+
+    <div>
+        <div class="section-title">Credentials</div>
+        <div class="form-grid">
+            <div class="form-group">
+                <label for="envUserId">Portal User ID</label>
+                <input type="text" id="envUserId" placeholder="username" />
+            </div>
+            <div class="form-group">
+                <label for="envPassword">Portal Password</label>
+                <input type="password" id="envPassword" placeholder="••••••••" />
+            </div>
+            <div class="form-group full">
+                <label for="envPortalUrl">Portal URL</label>
+                <input type="url" id="envPortalUrl" placeholder="https://portal.example.com" />
+            </div>
+            <div class="form-group full">
+                <label for="envGeminiKey">Gemini API Key</label>
+                <input type="password" id="envGeminiKey" placeholder="AIza..." />
+            </div>
+        </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+        <div class="section-title">Excel File</div>
+        <div class="form-group">
+            <label for="excelPath">AutoTag Sheet Path</label>
+            <div class="file-row">
+                <input type="text" id="excelPath" placeholder="./src/AutoTagSheet.xlsx" readonly />
+                <button class="btn-sm" id="btnBrowse">Browse…</button>
+                <button class="btn-sm" id="btnReset" title="Reset to default">↺</button>
+            </div>
+            <span class="save-note">Leave blank to use the default sheet at ./src/AutoTagSheet.xlsx</span>
+        </div>
+    </div>
+
+    <div>
+        <button class="btn-save" id="btnSave">💾 Save Settings</button>
+        <div class="save-note" id="saveStatus" style="margin-top:8px;color:var(--green);display:none;">Settings saved ✓</div>
+    </div>
+
+</div>
+
+<!-- ══════════════════ HISTORY TAB ════════════════════ -->
+<div class="tab-content" id="tab-history">
+    <div class="history-list" id="historyList">
+        <div style="padding:12px;font-size:11px;color:var(--text-muted);">Loading…</div>
+    </div>
+    <div class="history-content" id="historyContent">
+        <div class="history-empty" id="historyEmpty">Select a session report on the left</div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
