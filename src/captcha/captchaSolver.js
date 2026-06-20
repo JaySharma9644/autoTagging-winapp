@@ -103,8 +103,8 @@ function solveText(raw) {
         return nums.length ? Math.max(...nums) : null;
     }
 
-    // Simple arithmetic: "9 + 56 =", "34 - 12 =", "3 * 4 =", "10 / 2 ="
-    const mathMatch = t.match(/(\d+)\s*([+\-*/])\s*(\d+)\s*=/);
+    // Simple arithmetic: "9 + 56 =", "34 - 12 =", "3 * 4 =", "10 / 2 =", "5 % 3 ="
+    const mathMatch = t.match(/(\d+)\s*([+\-*/%])\s*(\d+)\s*=/);
     if (mathMatch) {
         const a = Number(mathMatch[1]);
         const op = mathMatch[2];
@@ -113,6 +113,7 @@ function solveText(raw) {
         if (op === '-') return a - b;
         if (op === '*') return a * b;
         if (op === '/' && b !== 0) return Math.round(a / b);
+        if (op === '%' && b !== 0) return a % b;
     }
 
     return null;

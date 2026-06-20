@@ -30,19 +30,18 @@ async function run() {
         const worksheet = excelData.worksheet;
         
         // 2. Initialize Browser
-        const browserData = await initializeBrowser();
-        browser = browserData.browser;
-        const context = browserData.context;
-        
+        const { browser: b, context } = await initializeBrowser();
+        browser = b;
+
         // 3. Extract column-wise vehicle groups
         logger.step('Extracting vehicle groups column-wise');
         const vehicleGroups = extractColumnWiseGroups(worksheet);
-        logger.info(`Found ${vehicleGroups.length} column groups to process`, { 
+        logger.info(`Found ${vehicleGroups.length} column groups to process`, {
             groups: vehicleGroups.map(g => ({ column: g.columnLetter, count: g.vehicles.length }))
         });
-        
-        // 4. Process all column groups in PARALLEL with independent logins
-        logger.step('Starting parallel batch processing with independent logins');
+
+        // 4. Process all groups in parallel (each gets its own tab in embedded mode)
+        logger.step('Starting parallel batch processing');
         const processingResults = await processVehicleGroupsInParallel(context, vehicleGroups, worksheet, CONFIG.PORTAL_URL);
         
         // 5. Create and populate status worksheet with color coding

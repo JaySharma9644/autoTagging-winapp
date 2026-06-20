@@ -139,6 +139,96 @@ header {
     overflow-y: auto;
 }
 
+/* ── Dashboard credentials strip ─────────────────────── */
+.dash-settings {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    flex-shrink: 0;
+}
+
+.dash-settings-group { flex: 1; min-width: 0; }
+
+.dash-settings .form-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.dash-settings-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* ── Upload bar ──────────────────────────────────────── */
+.upload-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.upload-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.upload-icon { font-size: 20px; flex-shrink: 0; }
+
+.upload-filename {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 360px;
+}
+
+.upload-hint {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    margin-top: 1px;
+}
+
+.upload-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.btn-upload {
+    padding: 6px 14px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+}
+.btn-upload:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-upload:not(:disabled):hover { background: #3a8def; }
+
+.upload-bar.uploaded {
+    border-color: var(--green);
+    background: rgba(34,197,94,0.05);
+}
+
+.upload-bar.uploaded .upload-hint { color: var(--green); }
+
+/* ── Control row ─────────────────────────────────────── */
 .control-row {
     display: flex;
     gap: 10px;
@@ -215,63 +305,183 @@ header {
 .stat-card.skipped .num { color: var(--yellow); }
 .stat-card.failed  .num { color: var(--red);    }
 
-/* Log area */
-.log-header {
+.stat-card.active-filter { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(74,158,255,0.2); }
+.stat-card.total.active-filter   { border-color: var(--text-dim); box-shadow: 0 0 0 2px rgba(148,163,184,0.2); }
+.stat-card.success.active-filter { border-color: var(--green);  box-shadow: 0 0 0 2px rgba(34,197,94,0.2); }
+.stat-card.skipped.active-filter { border-color: var(--yellow); box-shadow: 0 0 0 2px rgba(250,204,21,0.2); }
+.stat-card.failed.active-filter  { border-color: var(--red);    box-shadow: 0 0 0 2px rgba(239,68,68,0.2); }
+
+/* ── Inline records panel ────────────────────────────── */
+.records-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-panel);
+}
+
+.records-panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 4px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
 }
 
-.log-title {
+.records-panel-title {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.7px;
     color: var(--text-muted);
 }
 
-.log-box {
-    flex: 1;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow-y: auto;
-    padding: 10px;
+.records-panel-count {
+    font-size: 11px;
+    color: var(--text-muted);
     font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.6;
+}
+
+.records-panel-body {
+    flex: 1;
+    overflow-y: auto;
     min-height: 0;
 }
 
-.log-line {
+/* ── Automation Tab ──────────────────────────────────── */
+#tab-automation {
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.auto-browser {
+    flex: 1;
     display: flex;
-    gap: 6px;
-    padding: 1px 0;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-base);
 }
 
-.log-line .ts {
-    color: var(--text-muted);
+.browser-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    font-size: 10.5px;
 }
 
-.log-line .msg { word-break: break-all; }
-
-.log-line.info    .msg { color: #93c5fd; }
-.log-line.success .msg { color: var(--green); }
-.log-line.warning .msg { color: var(--yellow); }
-.log-line.error   .msg { color: var(--red); }
-.log-line.step    .msg { color: var(--cyan); }
-.log-line.debug   .msg { color: var(--purple); }
-.log-line.raw     .msg { color: var(--text-dim); }
-
-/* ── Settings Tab ────────────────────────────────────── */
-#tab-settings {
-    padding: 16px;
-    overflow-y: auto;
-    gap: 16px;
+.browser-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    flex-shrink: 0;
 }
+
+.browser-url {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 8px;
+}
+
+/* ── Column tab bar (inside automation browser panel) ── */
+.browser-col-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 10px;
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+
+.browser-col-tabs.hidden { display: none; }
+
+.col-tab {
+    padding: 4px 14px;
+    font-size: 11.5px;
+    font-weight: 500;
+    border-radius: 5px 5px 0 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.12s, background 0.12s;
+    position: relative;
+}
+
+.col-tab:hover { color: var(--text-primary); background: var(--bg-card); }
+
+.col-tab.active {
+    color: var(--accent);
+    background: var(--bg-panel);
+    border-color: var(--border);
+    border-bottom-color: var(--bg-panel);
+}
+
+.col-tab .tab-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    margin-right: 5px;
+    vertical-align: middle;
+}
+.col-tab.active .tab-dot   { background: var(--accent); }
+.col-tab.done .tab-dot     { background: var(--green);  }
+.col-tab.failed .tab-dot   { background: var(--red);    }
+
+.browser-viewport {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+webview {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+.browser-placeholder {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: var(--bg-base);
+    color: var(--text-muted);
+}
+
+.browser-placeholder.hidden { display: none; }
+
+.placeholder-icon { font-size: 40px; opacity: 0.4; }
+
+.placeholder-text { font-size: 13px; color: var(--text-muted); }
 
 .section-title {
     font-size: 11px;
@@ -360,54 +570,6 @@ input:focus { border-color: var(--accent); }
     margin-top: 2px;
 }
 
-/* ── History Tab ─────────────────────────────────────── */
-#tab-history {
-    flex-direction: row;
-    overflow: hidden;
-}
-
-.history-list {
-    width: 200px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--border);
-    overflow-y: auto;
-    padding: 10px 0;
-}
-
-.history-item {
-    padding: 8px 14px;
-    cursor: pointer;
-    font-size: 11px;
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    border-left: 2px solid transparent;
-    transition: all 0.12s;
-}
-
-.history-item:hover { background: var(--bg-card); color: var(--text-dim); }
-.history-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(74,158,255,0.05); }
-
-.history-item .hi-date { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
-
-.history-content {
-    flex: 1;
-    padding: 14px;
-    overflow-y: auto;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.7;
-    color: var(--text-dim);
-    white-space: pre-wrap;
-}
-
-.history-empty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    font-size: 13px;
-}
 
 /* ── Scrollbar ───────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -417,3 +579,126 @@ input:focus { border-color: var(--accent); }
 
 /* ── Utility ─────────────────────────────────────────── */
 .divider { height: 1px; background: var(--border); }
+
+/* ── Records table (shared by panel) ────────────────── */
+.records-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.records-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 9px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    z-index: 1;
+}
+
+.records-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+}
+
+.records-table tr:last-child td { border-bottom: none; }
+.records-table tr:hover td { background: var(--bg-card); }
+
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+}
+.badge-success { background: rgba(34,197,94,0.15); color: var(--green); }
+.badge-skipped { background: rgba(250,204,21,0.15); color: var(--yellow); }
+.badge-failed   { background: rgba(239,68,68,0.15);  color: var(--red); }
+.badge-pending  { background: rgba(148,163,184,0.12); color: var(--text-muted); }
+
+.no-records {
+    padding: 40px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* Make stat cards clickable */
+.stat-card { cursor: pointer; transition: transform 0.1s, border-color 0.15s, box-shadow 0.15s; position: relative; }
+.stat-card:hover { transform: translateY(-2px); }
+
+/* Download button on each card */
+.btn-card-dl {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 5px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.stat-card:hover .btn-card-dl { opacity: 1; }
+.btn-card-dl:hover { background: var(--bg-card); color: var(--text-primary); }
+.btn-card-dl:active { transform: scale(0.92); }
+
+/* ── Logs Tab ─────────────────────────────────────────── */
+#tab-logs {
+    padding: 0;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.logs-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
+}
+
+.logs-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-muted);
+}
+
+.log-box {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.65;
+    min-height: 0;
+}
+
+.log-line { display: flex; gap: 8px; padding: 1px 0; }
+.log-line .ts { color: var(--text-muted); flex-shrink: 0; font-size: 10.5px; }
+.log-line .msg { word-break: break-all; }
+.log-line.info    .msg { color: #93c5fd; }
+.log-line.success .msg { color: var(--green); }
+.log-line.warning .msg { color: var(--yellow); }
+.log-line.error   .msg { color: var(--red); }
+.log-line.step    .msg { color: var(--cyan); }
+.log-line.debug   .msg { color: var(--purple); }
+.log-line.raw     .msg { color: var(--text-dim); }

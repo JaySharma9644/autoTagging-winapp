@@ -1,19 +1,34 @@
 /**
  * Batch Processor Module
- * Handles parallel batch processing with independent logins
+ * Handles vehicle group processing — sequential when using an embedded page (CDP mode),
+ * parallel with independent logins when using standalone browser.
  */
 
-import { logger, CONFIG } from '../config.js';
+import { logger } from '../config.js';
 import { createPage, closePage } from '../browser/browserManager.js';
 import { login } from '../auth/login.js';
 import { navigateToTransporter, navigateToEpass } from '../auth/navigation.js';
 import { processVehicle } from './vehicleProcessor.js';
 
 /**
- * Processes a single column group in its own browser page with INDEPENDENT LOGIN
+ * Processes a single column group.
+ * If existingPage is provided (embedded/CDP mode), reuses it without creating or closing a page.
  */
-export async function processColumnGroup(context, group, worksheet, portalUrl) {
+async function findPageBySentinel(context, title, timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        for (const p of context.pages()) {
+            const t = await p.title().catch(() => '');
+            if (t === title) return p;
+        }
+        await new Promise(r => setTimeout(r, 300));
+    }
+    return null;
+}
+
+async function processColumnGroup(context, group, portalUrl) {
     let page;
+    let ownedPage = false;
     const groupLabel = `Column ${group.columnLetter}`;
 
     try {
@@ -21,7 +36,17 @@ export async function processColumnGroup(context, group, worksheet, portalUrl) {
         logger.info(`${groupLabel}: START  [${group.vehicles.length} vehicle(s)]`);
         logger.info(`${'═'.repeat(60)}`);
 
-        page = await createPage(context);
+        if (process.env.PLAYWRIGHT_CDP_PORT) {
+            // Signal main process to create an embedded tab for this column
+            process.stdout.write(`TAB_OPEN:${group.columnLetter}\n`);
+            const sentinel = `AUTOMATION_VIEW_${group.columnLetter}`;
+            page = await findPageBySentinel(context, sentinel);
+            if (!page) throw new Error(`Timed out waiting for embedded tab for column ${group.columnLetter}`);
+        } else {
+            page = await createPage(context);
+            ownedPage = true;
+        }
+
         await page.goto(portalUrl, { waitUntil: 'networkidle' });
         await navigateToTransporter(page);
         await login(page);
@@ -39,11 +64,7 @@ export async function processColumnGroup(context, group, worksheet, portalUrl) {
 
             const result = await processVehicle(page, vehicleData, groupLabel);
 
-            cellStatuses.push({
-                row: result.row,
-                column: result.column,
-                status: result.status
-            });
+            cellStatuses.push({ row: result.row, column: result.column, status: result.status });
 
             if (result.status === 'success') {
                 successCount++;
@@ -55,36 +76,51 @@ export async function processColumnGroup(context, group, worksheet, portalUrl) {
                 failedCount++;
                 logger.error(`${groupLabel}: Record ${i + 1} ✗ Failed — ${result.error}`);
             }
+
+            // Emit structured result for the UI records table
+            process.stdout.write(
+                `VEHICLE_RESULT:${JSON.stringify({
+                    column: group.columnLetter,
+                    vehicle: vehicleData.vehicle,
+                    row: vehicleData.row,
+                    status: result.status,
+                    error: result.error || null,
+                })}\n`
+            );
         }
 
         logger.info(`${'─'.repeat(60)}`);
         logger.info(`${groupLabel}: END  ✓ ${successCount} tagged  ↷ ${skippedCount} skipped  ✗ ${failedCount} failed`);
         logger.info(`${'─'.repeat(60)}`);
 
+        // Signal main process to close this column's tab
+        process.stdout.write(`TAB_DONE:${group.columnLetter}\n`);
+
         return { success: successCount, skipped: skippedCount, failed: failedCount, cellStatuses };
 
     } catch (error) {
         logger.exception(error, { function: 'processColumnGroup', column: group.columnLetter });
+        process.stdout.write(`TAB_DONE:${group.columnLetter}\n`);
         throw error;
     } finally {
-        await closePage(page, groupLabel);
+        if (ownedPage) await closePage(page, groupLabel);
     }
 }
 
 /**
- * Processes all vehicle column groups in parallel browser pages with INDEPENDENT LOGINS
+ * Processes all vehicle column groups.
+ * - With existingPage (embedded mode): runs sequentially, reusing the single embedded page.
+ * - Without existingPage (standalone mode): runs in parallel with independent logins per group.
  */
 export async function processVehicleGroupsInParallel(context, vehicleGroups, worksheet, portalUrl) {
     try {
         logger.info(`${'═'.repeat(60)}`);
-        logger.info(`BATCH START — ${vehicleGroups.length} group(s)`);
+        logger.info(`BATCH START — ${vehicleGroups.length} group(s) [parallel]`);
         logger.info(`${'═'.repeat(60)}`);
 
-        const processPromises = vehicleGroups.map(group =>
-            processColumnGroup(context, group, worksheet, portalUrl)
+        const results = await Promise.allSettled(
+            vehicleGroups.map(group => processColumnGroup(context, group, portalUrl))
         );
-
-        const results = await Promise.allSettled(processPromises);
 
         let totalSuccess = 0;
         let totalSkipped = 0;
@@ -106,11 +142,11 @@ export async function processVehicleGroupsInParallel(context, vehicleGroups, wor
                     totalRecords: group.vehicles.length,
                     successCount: success,
                     skippedCount: skipped,
-                    failedCount: failed
+                    failedCount: failed,
                 });
             } else {
-                failedGroups.push({ column: group.columnLetter, error: result.reason.message });
-                logger.error(`Column Group ${group.columnLetter} failed`, { error: result.reason.message });
+                failedGroups.push({ column: group.columnLetter, error: result.reason?.message });
+                logger.error(`Column Group ${group.columnLetter} failed`, { error: result.reason?.message });
             }
         });
 
@@ -127,7 +163,7 @@ export async function processVehicleGroupsInParallel(context, vehicleGroups, wor
             totalSuccess,
             totalSkipped,
             totalFailed,
-            totalRecords: vehicleGroups.reduce((sum, g) => sum + g.vehicles.length, 0)
+            totalRecords: vehicleGroups.reduce((sum, g) => sum + g.vehicles.length, 0),
         };
 
     } catch (error) {

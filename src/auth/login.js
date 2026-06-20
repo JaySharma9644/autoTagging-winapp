@@ -55,15 +55,15 @@ async function locateLoginForm(page) {
  */
 async function submitCredentials(page, form) {
     logger.debug('Filling login credentials');
-    await form.user.locator.fill(process.env.PORTAL_USER_ID, { timeout: 10000 });
+    await form.user.locator.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }, process.env.PORTAL_USER_ID);
 
-    // Password field starts as readonly and removes that attribute via onfocus
-    await form.pass.locator.click({ timeout: 10000 });
-    await form.pass.locator.fill(process.env.PORTAL_PASSWORD, { timeout: 10000 });
+    // Password field starts as readonly — onfocus removes it; trigger via JS
+    await form.pass.locator.evaluate(el => { el.removeAttribute('readonly'); el.focus(); });
+    await form.pass.locator.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); }, process.env.PORTAL_PASSWORD);
 
     logger.debug('Submitting login form');
     await Promise.all([
-        form.submit.locator.click({ timeout: 10000 }),
+        form.submit.locator.evaluate(el => el.click()),
         page.waitForLoadState('networkidle').catch(() => null)
     ]);
 }
