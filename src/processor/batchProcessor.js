@@ -4,123 +4,109 @@
  * parallel with independent logins when using standalone browser.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { logger } from '../config.js';
 import { createPage, closePage } from '../browser/browserManager.js';
 import { login } from '../auth/login.js';
 import { navigateToTransporter, navigateToEpass } from '../auth/navigation.js';
 import { processVehicle } from './vehicleProcessor.js';
 
+const STOP_FLAG = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../.stop-requested');
+
+function isStopRequested() {
+    try { return fs.existsSync(STOP_FLAG); } catch (_) { return false; }
+}
+
+function clearStopFlag() {
+    try { fs.unlinkSync(STOP_FLAG); } catch (_) {}
+}
+
+const NETWORK_ERROR_PATTERNS = [
+    /net::ERR_/i,
+    /NS_ERROR_NET/i,
+    /ERR_CONNECTION_REFUSED/i,
+    /ERR_NAME_NOT_RESOLVED/i,
+    /ERR_INTERNET_DISCONNECTED/i,
+    /ERR_NETWORK_CHANGED/i,
+    /ERR_EMPTY_RESPONSE/i,
+    /ERR_CONNECTION_TIMED_OUT/i,
+    /ERR_CONNECTION_RESET/i,
+    /ERR_CONNECTION_CLOSED/i,
+    /socket hang up/i,
+    /ECONNREFUSED/i,
+    /ENOTFOUND/i,
+    /ETIMEDOUT/i,
+];
+
+function isNetworkError(err) {
+    const msg = err?.message || String(err);
+    return NETWORK_ERROR_PATTERNS.some(re => re.test(msg));
+}
+
 /**
  * Processes a single column group.
  * If existingPage is provided (embedded/CDP mode), reuses it without creating or closing a page.
  */
-async function findPageBySentinel(context, title, timeoutMs = 15000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        for (const p of context.pages()) {
-            const t = await p.title().catch(() => '');
-            if (t === title) return p;
-        }
-        await new Promise(r => setTimeout(r, 300));
-    }
-    return null;
-}
 
-async function processColumnGroup(context, group, portalUrl) {
-    let page;
-    let ownedPage = false;
+async function processGroupVehicles(page, group) {
     const groupLabel = `Column ${group.columnLetter}`;
+    let successCount = 0;
+    let skippedCount = 0;
+    let failedCount  = 0;
+    const cellStatuses = [];
 
-    try {
-        logger.info(`${'═'.repeat(60)}`);
-        logger.info(`${groupLabel}: START  [${group.vehicles.length} vehicle(s)]`);
-        logger.info(`${'═'.repeat(60)}`);
+    for (let i = 0; i < group.vehicles.length; i++) {
+        const vehicleData = group.vehicles[i];
+        logger.info(`${groupLabel}: ── Record ${i + 1}/${group.vehicles.length} ── Vehicle: ${vehicleData.vehicle}`);
 
-        if (process.env.PLAYWRIGHT_CDP_PORT) {
-            // Signal main process to create an embedded tab for this column
-            process.stdout.write(`TAB_OPEN:${group.columnLetter}\n`);
-            const sentinel = `AUTOMATION_VIEW_${group.columnLetter}`;
-            page = await findPageBySentinel(context, sentinel);
-            if (!page) throw new Error(`Timed out waiting for embedded tab for column ${group.columnLetter}`);
-        } else {
-            page = await createPage(context);
-            ownedPage = true;
-        }
+        const result = await processVehicle(page, vehicleData, groupLabel);
+        cellStatuses.push({ row: result.row, column: result.column, status: result.status });
 
-        await page.goto(portalUrl, { waitUntil: 'networkidle' });
-        await navigateToTransporter(page);
-        await login(page);
-        await navigateToEpass(page);
+        if (result.status === 'success')       { successCount++; logger.success(`${groupLabel}: Record ${i + 1} ✓ Tagged`); }
+        else if (result.status === 'skipped')  { skippedCount++; logger.warning(`${groupLabel}: Record ${i + 1} ↷ Skipped`); }
+        else                                   { failedCount++;  logger.error(`${groupLabel}: Record ${i + 1} ✗ Failed — ${result.error}`); }
 
-        let successCount = 0;
-        let skippedCount = 0;
-        let failedCount = 0;
-        const cellStatuses = [];
-
-        for (let i = 0; i < group.vehicles.length; i++) {
-            const vehicleData = group.vehicles[i];
-
-            logger.info(`${groupLabel}: ── Record ${i + 1}/${group.vehicles.length} ── Vehicle: ${vehicleData.vehicle}`);
-
-            const result = await processVehicle(page, vehicleData, groupLabel);
-
-            cellStatuses.push({ row: result.row, column: result.column, status: result.status });
-
-            if (result.status === 'success') {
-                successCount++;
-                logger.success(`${groupLabel}: Record ${i + 1} ✓ Tagged`);
-            } else if (result.status === 'skipped') {
-                skippedCount++;
-                logger.warning(`${groupLabel}: Record ${i + 1} ↷ Skipped (already tagged)`);
-            } else {
-                failedCount++;
-                logger.error(`${groupLabel}: Record ${i + 1} ✗ Failed — ${result.error}`);
-            }
-
-            // Emit structured result for the UI records table
-            process.stdout.write(
-                `VEHICLE_RESULT:${JSON.stringify({
-                    column: group.columnLetter,
-                    vehicle: vehicleData.vehicle,
-                    row: vehicleData.row,
-                    status: result.status,
-                    error: result.error || null,
-                })}\n`
-            );
-        }
-
-        logger.info(`${'─'.repeat(60)}`);
-        logger.info(`${groupLabel}: END  ✓ ${successCount} tagged  ↷ ${skippedCount} skipped  ✗ ${failedCount} failed`);
-        logger.info(`${'─'.repeat(60)}`);
-
-        // Signal main process to close this column's tab
-        process.stdout.write(`TAB_DONE:${group.columnLetter}\n`);
-
-        return { success: successCount, skipped: skippedCount, failed: failedCount, cellStatuses };
-
-    } catch (error) {
-        logger.exception(error, { function: 'processColumnGroup', column: group.columnLetter });
-        process.stdout.write(`TAB_DONE:${group.columnLetter}\n`);
-        throw error;
-    } finally {
-        if (ownedPage) await closePage(page, groupLabel);
+        process.stdout.write(
+            `VEHICLE_RESULT:${JSON.stringify({
+                column: group.columnLetter,
+                vehicle: vehicleData.vehicle,
+                row: vehicleData.row,
+                status: result.status,
+                error: result.error || null,
+            })}\n`
+        );
     }
+
+    // After last vehicle, wait for the search input to be ready so the next group skips navigation
+    await page.locator('#txtVehicleNo').waitFor({ state: 'visible', timeout: 6000 }).catch(() => {});
+
+    return { success: successCount, skipped: skippedCount, failed: failedCount, cellStatuses };
 }
 
 /**
- * Processes all vehicle column groups.
- * - With existingPage (embedded mode): runs sequentially, reusing the single embedded page.
- * - Without existingPage (standalone mode): runs in parallel with independent logins per group.
+ * Processes all vehicle column groups sequentially on a single shared session.
+ * Login happens once. Between groups we navigate back to epass — no re-login.
  */
 export async function processVehicleGroupsInParallel(context, vehicleGroups, worksheet, portalUrl) {
+    let page;
+    let ownedPage = false;
+
     try {
         logger.info(`${'═'.repeat(60)}`);
-        logger.info(`BATCH START — ${vehicleGroups.length} group(s) [parallel]`);
+        logger.info(`BATCH START — ${vehicleGroups.length} group(s) [sequential, single session]`);
         logger.info(`${'═'.repeat(60)}`);
 
-        const results = await Promise.allSettled(
-            vehicleGroups.map(group => processColumnGroup(context, group, portalUrl))
-        );
+        // ── One-time setup: open page, login, navigate ───────────────────────
+        page = await createPage(context);
+        ownedPage = true;
+
+        await page.goto(portalUrl, { waitUntil: 'domcontentloaded' });
+        await navigateToTransporter(page);
+        await login(page);
+        await navigateToEpass(page);
+        logger.success('Session ready — starting group processing');
 
         let totalSuccess = 0;
         let totalSkipped = 0;
@@ -129,26 +115,64 @@ export async function processVehicleGroupsInParallel(context, vehicleGroups, wor
         const allCellStatuses = [];
         const failedGroups = [];
 
-        results.forEach((result, index) => {
-            const group = vehicleGroups[index];
-            if (result.status === 'fulfilled') {
-                const { success, skipped, failed, cellStatuses } = result.value;
+        for (let g = 0; g < vehicleGroups.length; g++) {
+            const group = vehicleGroups[g];
+            const groupLabel = `Column ${group.columnLetter}`;
+
+            logger.info(`${'═'.repeat(60)}`);
+            logger.info(`${groupLabel}: START  [${group.vehicles.length} vehicle(s)]`);
+            logger.info(`${'═'.repeat(60)}`);
+
+            // Stay on Tag More Vehicle page between groups — only navigate if we've genuinely left it
+            if (g > 0) {
+                const onSearchPage = await page.locator('#txtVehicleNo').isVisible({ timeout: 6000 }).catch(() => false);
+                if (onSearchPage) {
+                    logger.info(`${groupLabel}: Already on Tag More Vehicle page — skipping navigation`);
+                } else {
+                    logger.info(`${groupLabel}: Not on Tag More Vehicle page — navigating back`);
+                    try {
+                        await navigateToEpass(page);
+                    } catch (navErr) {
+                        // Session expired — re-login once then continue
+                        logger.warning(`${groupLabel}: Navigation failed, re-logging in — ${navErr.message}`);
+                        await page.goto(portalUrl, { waitUntil: 'domcontentloaded' });
+                        await navigateToTransporter(page);
+                        await login(page);
+                        await navigateToEpass(page);
+                    }
+                }
+            }
+
+            try {
+                const { success, skipped, failed, cellStatuses } = await processGroupVehicles(page, group);
+
+                logger.info(`${'─'.repeat(60)}`);
+                logger.info(`${groupLabel}: END  ✓ ${success} tagged  ↷ ${skipped} skipped  ✗ ${failed} failed`);
+                logger.info(`${'─'.repeat(60)}`);
+                process.stdout.write(`TAB_DONE:${group.columnLetter}\n`);
+
                 totalSuccess += success;
                 totalSkipped += skipped;
-                totalFailed += failed;
+                totalFailed  += failed;
                 if (cellStatuses) allCellStatuses.push(...cellStatuses);
                 columnResults.push({
                     columnLetter: group.columnLetter,
                     totalRecords: group.vehicles.length,
                     successCount: success,
                     skippedCount: skipped,
-                    failedCount: failed,
+                    failedCount:  failed,
                 });
-            } else {
-                failedGroups.push({ column: group.columnLetter, error: result.reason?.message });
-                logger.error(`Column Group ${group.columnLetter} failed`, { error: result.reason?.message });
+            } catch (err) {
+                process.stdout.write(`TAB_DONE:${group.columnLetter}\n`);
+                if (isNetworkError(err)) {
+                    logger.error('Network error — portal may be down. Stopping.');
+                    process.stdout.write(`NETWORK_DOWN:${err.message}\n`);
+                    process.exit(2);
+                }
+                failedGroups.push({ column: group.columnLetter, error: err?.message });
+                logger.error(`${groupLabel} failed — ${err?.message}`);
             }
-        });
+        }
 
         logger.info(`${'═'.repeat(60)}`);
         logger.info(`BATCH END — ✓ ${totalSuccess} tagged  ↷ ${totalSkipped} skipped  ✗ ${totalFailed} failed`);
@@ -169,5 +193,7 @@ export async function processVehicleGroupsInParallel(context, vehicleGroups, wor
     } catch (error) {
         logger.exception(error, { function: 'processVehicleGroupsInParallel' });
         throw error;
+    } finally {
+        if (ownedPage) await closePage(page, 'Session');
     }
 }

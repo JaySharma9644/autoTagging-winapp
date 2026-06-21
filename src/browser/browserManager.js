@@ -16,33 +16,8 @@ import { logger } from '../config.js';
  * existingPage is non-null in CDP mode — callers should use it directly instead of createPage().
  */
 export async function initializeBrowser() {
-    const cdpPort = process.env.PLAYWRIGHT_CDP_PORT;
-
-    if (cdpPort) {
-        logger.step('Connecting to embedded browser via CDP');
-
-        let browser;
-        for (let attempt = 1; attempt <= 10; attempt++) {
-            try {
-                browser = await chromium.connectOverCDP(`http://localhost:${cdpPort}`);
-                break;
-            } catch (e) {
-                if (attempt === 10) throw e;
-                await new Promise(r => setTimeout(r, 500));
-            }
-        }
-
-        const context = browser.contexts()[0];
-        if (!context) throw new Error('No browser context found in CDP connection');
-
-        logger.success('Connected to embedded browser');
-        return { browser, context };
-    }
-
-    // Standalone mode (fallback)
-    logger.step('Launching standalone browser');
-    const headless = process.env.PLAYWRIGHT_HEADLESS === 'true';
-    const browser = await chromium.launch({ headless });
+    logger.step('Launching headless browser');
+    const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     logger.success('Browser launched successfully');
     return { browser, context };

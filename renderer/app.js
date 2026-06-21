@@ -63,16 +63,31 @@ const recordsPanelTitle = document.getElementById('recordsPanelTitle');
 const recordsPanelCount = document.getElementById('recordsPanelCount');
 const recordsTableBody  = document.getElementById('recordsTableBody');
 const noRecords         = document.getElementById('noRecords');
+const tableDlBar        = document.getElementById('tableDlBar');
+const dlBtnAll          = document.getElementById('dlBtnAll');
+const dlBtnSuccess      = document.getElementById('dlBtnSuccess');
+const dlBtnSkipped      = document.getElementById('dlBtnSkipped');
+const dlBtnFailed       = document.getElementById('dlBtnFailed');
 
 // Credentials (display only)
 const envUserId   = document.getElementById('envUserId');
 const envPassword = document.getElementById('envPassword');
 
-// Automation browser panel
-const browserPlaceholder = document.getElementById('browserPlaceholder');
-const browserUrlLabel    = document.getElementById('browserUrlLabel');
-const browserViewport    = document.getElementById('browserViewport');
-const browserColTabs     = document.getElementById('browserColTabs');
+// Network-down toast
+const networkToast      = document.getElementById('networkToast');
+const networkToastMsg   = document.getElementById('networkToastMsg');
+const networkToastClose = document.getElementById('networkToastClose');
+
+function showNetworkDownToast(reason) {
+    networkToastMsg.textContent = reason
+        ? `Portal error: ${reason}. Please try again after some time.`
+        : 'Portal appears to be down. Please try again after some time.';
+    networkToast.classList.remove('hidden');
+}
+
+networkToastClose.addEventListener('click', () => {
+    networkToast.classList.add('hidden');
+});
 
 // ── Stats rendering ───────────────────────────────────────────────────────────
 
@@ -81,6 +96,21 @@ function renderStats() {
     statSuccess.textContent = state.stats.success;
     statSkipped.textContent = state.stats.skipped;
     statFailed.textContent  = state.stats.failed;
+
+    const processed = state.records.filter(r => r.status !== 'pending').length;
+    const s = state.stats.success;
+    const sk = state.stats.skipped;
+    const f = state.stats.failed;
+
+    dlBtnAll.textContent     = `⬇ Download All (${processed})`;
+    dlBtnSuccess.textContent = `⬇ Tagged (${s})`;
+    dlBtnSkipped.textContent = `⬇ Already Tagged (${sk})`;
+    dlBtnFailed.textContent  = `⬇ Failed (${f})`;
+
+    dlBtnAll.classList.toggle('hidden',     processed === 0);
+    dlBtnSuccess.classList.toggle('hidden', s  === 0);
+    dlBtnSkipped.classList.toggle('hidden', sk === 0);
+    dlBtnFailed.classList.toggle('hidden',  f  === 0);
 }
 
 // ── Log rendering ─────────────────────────────────────────────────────────────
@@ -184,24 +214,29 @@ document.querySelectorAll('.stat-card[data-filter]').forEach(card => {
     });
 });
 
-// Download button handlers
-document.querySelectorAll('.btn-card-dl[data-dl]').forEach(btn => {
-    btn.addEventListener('click', async e => {
-        e.stopPropagation();
-        const filter = btn.dataset.dl;
-        const filtered = filter === 'all'
-            ? state.records.filter(r => r.status !== 'pending')
-            : state.records.filter(r => r.status === filter);
+// Shared download handler — used by both card buttons and table bar buttons
+async function triggerDownload(btn, filter, originalText) {
+    const filtered = filter === 'all'
+        ? state.records.filter(r => r.status !== 'pending')
+        : state.records.filter(r => r.status === filter);
 
-        if (filtered.length === 0) return;
+    if (filtered.length === 0) return;
 
-        const labelMap = { all: 'All Records', success: 'Tagged', skipped: 'Already Tagged', failed: 'Failed' };
-        const label = labelMap[filter] || filter;
+    const labelMap = { all: 'All Records', success: 'Tagged', skipped: 'Already Tagged', failed: 'Failed' };
+    const label = labelMap[filter] || filter;
 
-        btn.textContent = '⏳';
-        const result = await window.electronAPI.downloadRecords({ records: filtered, label });
-        btn.textContent = result.ok ? '✓' : '⬇';
-        setTimeout(() => { btn.textContent = '⬇'; }, 2000);
+    btn.textContent = '⏳';
+    btn.disabled = true;
+    const result = await window.electronAPI.downloadRecords({ records: filtered, label });
+    btn.textContent = result.ok ? '✓ Done' : originalText;
+    btn.disabled = false;
+    if (result.ok) setTimeout(() => { btn.textContent = originalText; }, 2000);
+}
+
+// Grid download buttons
+[dlBtnAll, dlBtnSuccess, dlBtnSkipped, dlBtnFailed].forEach(btn => {
+    btn.addEventListener('click', async () => {
+        await triggerDownload(btn, btn.dataset.dl, btn.textContent);
     });
 });
 
@@ -228,6 +263,22 @@ window.electronAPI.onVehicleResult(record => {
 });
 
 // ── Upload bar ────────────────────────────────────────────────────────────────
+
+const btnDownloadTemplate = document.getElementById('btnDownloadTemplate');
+
+btnDownloadTemplate.addEventListener('click', async () => {
+    const orig = btnDownloadTemplate.textContent;
+    btnDownloadTemplate.textContent = '⏳';
+    btnDownloadTemplate.disabled = true;
+    const result = await window.electronAPI.downloadTemplate();
+    btnDownloadTemplate.disabled = false;
+    if (result.ok) {
+        btnDownloadTemplate.textContent = '✓ Saved';
+        setTimeout(() => { btnDownloadTemplate.textContent = orig; }, 2000);
+    } else {
+        btnDownloadTemplate.textContent = orig;
+    }
+});
 
 let pickedSheetPath = null;
 
@@ -272,8 +323,19 @@ btnUploadSheet.addEventListener('click', async () => {
 
 // ── Controls ──────────────────────────────────────────────────────────────────
 
+// Tracks whether the user manually clicked Stop so onDone doesn't override idle status with 'error'
+let manualStop  = false;
+let isRetryRun  = false;  // true while processing the auto-retry pass
+
+function handleAutomationDone() {
+    setRunning(false);
+    if (uploadBar.classList.contains('uploaded')) btnStart.disabled = false;
+}
+
 btnStart.addEventListener('click', async () => {
     if (state.running) return;
+
+    manualStop = false;
 
     // Reset statuses to pending but keep the vehicle list (total stays the same)
     state.records.forEach(r => { r.status = 'pending'; r.error = null; });
@@ -281,7 +343,6 @@ btnStart.addEventListener('click', async () => {
     state.filter = 'all';
     renderStats();
     renderRecordsPanel();
-    clearColTabs();
 
     document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-filter'));
     document.querySelector('.stat-card[data-filter="all"]').classList.add('active-filter');
@@ -293,15 +354,60 @@ btnStart.addEventListener('click', async () => {
         appendLog(data);
     });
 
-    window.electronAPI.onDone(({ code }) => {
-        setRunning(false);
+    window.electronAPI.onDone(async ({ code }) => {
+        if (manualStop) {
+            manualStop = false;
+            isRetryRun = false;
+            handleAutomationDone();
+            return;
+        }
+
+        // Auto-retry failed records once after the first pass
+        const failed = state.records.filter(r => r.status === 'failed');
+        if (!isRetryRun && failed.length > 0) {
+            isRetryRun = true;
+            appendLog(`[INFO] ── Auto-retrying ${failed.length} failed record(s)…`);
+            setStatus('running');
+
+            const result = await window.electronAPI.writeRetrySheet({ records: failed });
+            if (!result.ok) {
+                appendLog(`[ERROR] Retry sheet write failed: ${result.error}`);
+                isRetryRun = false;
+                handleAutomationDone();
+                setStatus('error');
+                return;
+            }
+
+            // Merge retry records into state — keep succeeded/skipped, reset failed to pending
+            state.records.forEach(r => {
+                if (r.status === 'failed') { r.status = 'pending'; r.error = null; }
+            });
+            state.stats.failed  = 0;
+            renderStats();
+            renderRecordsPanel();
+
+            window.electronAPI.offLogLine();
+            window.electronAPI.offDone();
+
+            window.electronAPI.onLogLine(data => appendLog(data));
+            window.electronAPI.onDone(async ({ code: retryCode }) => {
+                isRetryRun = false;
+                handleAutomationDone();
+                setStatus(retryCode === 0 ? 'done' : 'error');
+            });
+
+            const startResult = await window.electronAPI.startAutomation({ excelPath: '' });
+            if (startResult && startResult.error) {
+                isRetryRun = false;
+                handleAutomationDone();
+                setStatus('error');
+            }
+            return;
+        }
+
+        isRetryRun = false;
+        handleAutomationDone();
         setStatus(code === 0 ? 'done' : 'error');
-        if (uploadBar.classList.contains('uploaded')) btnStart.disabled = false;
-        // Mark column tabs
-        const failCols = new Set(state.records.filter(r => r.status !== 'success').map(r => r.column));
-        const okCols   = new Set(state.records.filter(r => r.status === 'success').map(r => r.column));
-        failCols.forEach(col => markColTabDone(col, false));
-        okCols.forEach(col => markColTabDone(col, true));
     });
 
     const result = await window.electronAPI.startAutomation({ excelPath: state.excelPath || '' });
@@ -312,10 +418,18 @@ btnStart.addEventListener('click', async () => {
 });
 
 btnStop.addEventListener('click', async () => {
+    manualStop  = true;
+    isRetryRun  = false;
     await window.electronAPI.stopAutomation();
-    setRunning(false);
+    handleAutomationDone();
     setStatus('idle');
-    clearColTabs();
+});
+
+window.electronAPI.onNetworkDown(({ reason }) => {
+    manualStop = true; // prevent onDone from setting 'error' after process.exit(2)
+    handleAutomationDone();
+    setStatus('idle');
+    showNetworkDownToast(reason);
 });
 
 btnClear.addEventListener('click', () => {
@@ -336,96 +450,6 @@ function setRunning(yes) {
     btnStop.disabled  = !yes;
 }
 
-// ── Automation browser panel ──────────────────────────────────────────────────
-
-function positionAutomationView() {
-    const rect = browserViewport.getBoundingClientRect();
-    window.electronAPI.setAutomationViewBounds({
-        x: Math.round(rect.x), y: Math.round(rect.y),
-        width: Math.round(rect.width), height: Math.round(rect.height),
-    });
-    browserPlaceholder.classList.add('hidden');
-}
-
-const resizeObserver = new ResizeObserver(() => {
-    if (activeTab === 'automation') positionAutomationView();
-});
-resizeObserver.observe(browserViewport);
-
-window.electronAPI.onAutomationViewUrl(url => { browserUrlLabel.textContent = url; });
-
-// ── Column tabs ───────────────────────────────────────────────────────────────
-
-let activeColTab = null;
-
-function addColTab(column) {
-    browserColTabs.classList.remove('hidden');
-    browserPlaceholder.classList.add('hidden');
-
-    const btn = document.createElement('button');
-    btn.className = 'col-tab';
-    btn.dataset.column = column;
-    btn.innerHTML = `<span class="tab-dot"></span>Col ${column}`;
-
-    btn.addEventListener('click', () => {
-        switchColTab(column);
-        window.electronAPI.switchAutomationTab(column);
-        if (activeTab === 'automation') positionAutomationView();
-    });
-
-    browserColTabs.appendChild(btn);
-    if (!activeColTab) switchColTab(column);
-}
-
-function switchColTab(column) {
-    activeColTab = column;
-    browserColTabs.querySelectorAll('.col-tab').forEach(b =>
-        b.classList.toggle('active', b.dataset.column === column)
-    );
-}
-
-function markColTabDone(column, success) {
-    const btn = browserColTabs.querySelector(`[data-column="${column}"]`);
-    if (btn) btn.classList.add(success ? 'done' : 'failed');
-}
-
-function clearColTabs() {
-    browserColTabs.innerHTML = '';
-    browserColTabs.classList.add('hidden');
-    activeColTab = null;
-    browserPlaceholder.classList.remove('hidden');
-    browserUrlLabel.textContent = 'about:blank';
-}
-
-window.electronAPI.onTabOpened(column => {
-    addColTab(column);
-    if (activeTab === 'automation') {
-        window.electronAPI.switchAutomationTab(column);
-        positionAutomationView();
-    }
-});
-
-window.electronAPI.onTabClosed(column => {
-    const btn = browserColTabs.querySelector(`[data-column="${column}"]`);
-    if (btn) btn.remove();
-
-    const remaining = browserColTabs.querySelectorAll('.col-tab');
-
-    if (remaining.length === 0) {
-        // All groups done — hide tab bar and show placeholder
-        browserColTabs.classList.add('hidden');
-        activeColTab = null;
-        browserPlaceholder.classList.remove('hidden');
-        browserUrlLabel.textContent = 'about:blank';
-    } else if (activeColTab === column) {
-        // Closed tab was active — switch to the first remaining tab
-        const nextCol = remaining[0].dataset.column;
-        switchColTab(nextCol);
-        window.electronAPI.switchAutomationTab(nextCol);
-        if (activeTab === 'automation') positionAutomationView();
-    }
-});
-
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
 let activeTab = 'dashboard';
@@ -438,8 +462,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.add('active');
         document.getElementById(`tab-${tab}`).classList.add('active');
         activeTab = tab;
-        if (tab === 'automation') positionAutomationView();
-        else window.electronAPI.hideAutomationView();
     });
 });
 

@@ -7,32 +7,54 @@
 import { createWorker } from 'tesseract.js';
 import { logger } from '../config.js';
 
+// Persistent worker — initialised once, reused for every captcha solve.
+// Avoids the expensive WASM + language-data reload on every vehicle.
+let _worker = null;
+
+async function getWorker() {
+    if (!_worker) {
+        _worker = await createWorker('eng', 1, { logger: () => {} });
+    }
+    return _worker;
+}
+
 export async function solveCaptcha(page, captchaLocator) {
-    let worker;
     try {
         logger.step('Solving Captcha (Tesseract OCR)');
 
+        // Capture image and OCR in parallel where possible
         const captchaBuffer = await captchaLocator.screenshot();
         logger.debug('Captcha image captured');
 
-        worker = await createWorker('eng', 1, { logger: () => {} });
+        const worker = await getWorker();
         const { data: { text } } = await worker.recognize(captchaBuffer);
-        await worker.terminate();
-        worker = null;
 
         const raw = text.trim();
         logger.debug('Captcha OCR text', { raw });
 
-        const answer = solveText(raw);
+        let answer = solveText(raw);
         if (answer === null) {
-            throw new Error(`Could not parse captcha text: "${raw}"`);
+            // OCR may have dropped an operator symbol — retry with a fresh screenshot
+            logger.debug('Captcha parse failed, retrying with fresh screenshot');
+            const retryBuffer = await captchaLocator.screenshot();
+            const { data: { text: retryText } } = await worker.recognize(retryBuffer);
+            const rawRetry = retryText.trim();
+            logger.debug('Captcha OCR retry text', { raw: rawRetry });
+            answer = solveText(rawRetry);
+            if (answer === null) {
+                throw new Error(`Could not parse captcha text: "${raw}" (retry: "${rawRetry}")`);
+            }
         }
 
         logger.success('Captcha solved', { raw, answer });
         return String(answer);
 
     } catch (error) {
-        if (worker) await worker.terminate().catch(() => {});
+        // On OCR error, reset the persistent worker so it's recreated fresh next time
+        if (_worker) {
+            await _worker.terminate().catch(() => {});
+            _worker = null;
+        }
         logger.error('Captcha solving failed', { error: error.message });
         throw error;
     }
@@ -49,15 +71,16 @@ export async function solveCaptcha(page, captchaLocator) {
  *   "Which is the greatest No. ? 9,56,12 ="  → max
  *   "Which is the smallest No. ? 9,56,12 ="  → min
  *   "Which is the Middle No. ? 6,64,44 ="    → median
- *   "Which is the first No. ? 9,22,41 ="     → min (first when sorted)
- *   "Which is the last No. ? 9,22,41 ="      → max (last when sorted)
+ *   "Which is the first No. ? 9,22,41 ="     → first element in list (9)
+ *   "Which is the last No. ? 9,22,41 ="      → last element in list (41)
  *   "9 + 56 ="  /  "34 - 12 ="  /  "3 * 4 ="  /  "10 / 2 ="
  */
 function solveText(raw) {
-    // Only normalise arithmetic symbols — keep word characters intact
+    // Normalise arithmetic symbols — keep word characters intact
     const t = raw
         .replace(/×/g, '*')
         .replace(/÷/g, '/')
+        .replace(/#/g, '*')   // OCR misreads * as #
         .trim();
 
     // "No" matcher: handles OCR variants — "No.", "N0.", "no.", with/without space before it
@@ -87,20 +110,20 @@ function solveText(raw) {
         return nums.length ? nums[Math.floor(nums.length / 2)] : null;
     }
 
-    // "Which is the first No. ? ..." → smallest
+    // "Which is the first No. ? ..." → first element in the list as written
     const firstRe = new RegExp(`first\\s*${NO}\\s*\\?\\s*([\\d,\\s]+)`, 'i');
     const firstMatch = t.match(firstRe);
     if (firstMatch) {
         const nums = parseNumberList(firstMatch[1]);
-        return nums.length ? Math.min(...nums) : null;
+        return nums.length ? nums[0] : null;
     }
 
-    // "Which is the last No. ? ..." → largest
+    // "Which is the last No. ? ..." → last element in the list as written
     const lastRe = new RegExp(`last\\s*${NO}\\s*\\?\\s*([\\d,\\s]+)`, 'i');
     const lastMatch = t.match(lastRe);
     if (lastMatch) {
         const nums = parseNumberList(lastMatch[1]);
-        return nums.length ? Math.max(...nums) : null;
+        return nums.length ? nums[nums.length - 1] : null;
     }
 
     // Simple arithmetic: "9 + 56 =", "34 - 12 =", "3 * 4 =", "10 / 2 =", "5 % 3 ="

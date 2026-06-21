@@ -27,6 +27,7 @@ export const SELECTORS = {
         SEARCH_INPUT: '#txtVehicleNo',
         SEARCH_BUTTON: 'text="Search"',
         ALREADY_TAGGED: 'text="VEHICLE IS ALREADY TAGGED ON THIS PERMIT"',
+        VEHICLE_VLD_INFO: '#lblVehicleVldInfo',
         RESET_BUTTON: '#btnCancel',
     },
 

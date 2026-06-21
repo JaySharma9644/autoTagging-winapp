@@ -9,6 +9,16 @@
 </head>
 <body>
 
+<!-- ── Network-down toast ─────────────────────────────── -->
+<div id="networkToast" class="network-toast hidden">
+    <span class="network-toast-icon">⚠️</span>
+    <div class="network-toast-body">
+        <strong>Server Unreachable</strong>
+        <span id="networkToastMsg">Portal appears to be down. Please try again after some time.</span>
+    </div>
+    <button class="network-toast-close" id="networkToastClose">✕</button>
+</div>
+
 <!-- ── Header ─────────────────────────────────────────── -->
 <header>
     <div class="logo">🤖</div>
@@ -26,7 +36,6 @@
 <div class="tabs">
     <button class="tab-btn active" data-tab="dashboard">⚡ Dashboard</button>
     <button class="tab-btn"        data-tab="logs">📋 Logs</button>
-    <button class="tab-btn"        data-tab="automation">🤖 Automation</button>
 </div>
 
 <!-- ══════════════════ DASHBOARD TAB ══════════════════ -->
@@ -61,6 +70,7 @@
             </div>
         </div>
         <div class="upload-actions">
+            <button class="btn-sm btn-tpl" id="btnDownloadTemplate">⬇ Template</button>
             <button class="btn-sm" id="btnPickSheet">Choose File</button>
             <button class="btn-upload" id="btnUploadSheet" disabled>⬆ Upload</button>
         </div>
@@ -78,22 +88,18 @@
         <div class="stat-card total"   data-filter="all">
             <div class="num" id="statTotal">0</div>
             <div class="lbl">Total</div>
-            <button class="btn-card-dl" data-dl="all"     title="Download Total">⬇</button>
         </div>
         <div class="stat-card success" data-filter="success">
             <div class="num" id="statSuccess">0</div>
             <div class="lbl">Tagged</div>
-            <button class="btn-card-dl" data-dl="success" title="Download Tagged">⬇</button>
         </div>
         <div class="stat-card skipped" data-filter="skipped">
             <div class="num" id="statSkipped">0</div>
             <div class="lbl">Already Tagged</div>
-            <button class="btn-card-dl" data-dl="skipped" title="Download Already Tagged">⬇</button>
         </div>
         <div class="stat-card failed"  data-filter="failed">
             <div class="num" id="statFailed">0</div>
             <div class="lbl">Failed</div>
-            <button class="btn-card-dl" data-dl="failed"  title="Download Failed">⬇</button>
         </div>
     </div>
 
@@ -102,6 +108,12 @@
         <div class="records-panel-header">
             <span class="records-panel-title" id="recordsPanelTitle">All Records</span>
             <span class="records-panel-count" id="recordsPanelCount">0 records</span>
+            <div class="table-dl-bar" id="tableDlBar">
+                <button class="btn-table-dl hidden" data-dl="all"     id="dlBtnAll">⬇ Download All (0)</button>
+                <button class="btn-table-dl success hidden" data-dl="success" id="dlBtnSuccess">⬇ Tagged (0)</button>
+                <button class="btn-table-dl skipped hidden" data-dl="skipped" id="dlBtnSkipped">⬇ Already Tagged (0)</button>
+                <button class="btn-table-dl failed  hidden" data-dl="failed"  id="dlBtnFailed">⬇ Failed (0)</button>
+            </div>
         </div>
         <div class="records-panel-body">
             <table class="records-table">
@@ -132,25 +144,6 @@
     <div class="log-box" id="logBox"></div>
 </div>
 
-<!-- ══════════════════ AUTOMATION TAB ══════════════════ -->
-<div class="tab-content" id="tab-automation">
-
-    <!-- Embedded browser (full width now) -->
-    <div class="auto-browser" id="autoBrowserPanel" style="flex:1;border:none;">
-        <div class="browser-toolbar">
-            <span class="browser-label">🌐 Portal Browser</span>
-            <span class="browser-url" id="browserUrlLabel">about:blank</span>
-        </div>
-        <div class="browser-col-tabs hidden" id="browserColTabs"></div>
-        <div class="browser-viewport" id="browserViewport">
-            <div class="browser-placeholder" id="browserPlaceholder">
-                <div class="placeholder-icon">🌐</div>
-                <div class="placeholder-text">Start the automation to see the portal live here</div>
-            </div>
-        </div>
-    </div>
-
-</div>
 
 <script src="app.js"></script>
 </body>

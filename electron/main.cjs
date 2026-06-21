@@ -1,67 +1,10 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, screen, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, session } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 
-app.commandLine.appendSwitch('remote-debugging-port', '9222');
-app.commandLine.appendSwitch('remote-allow-origins', '*');
-
 let mainWindow;
 let automationProcess = null;
-
-// Multi-tab automation view management
-const automationViews = new Map(); // column → WebContentsView
-let activeTabColumn   = null;
-let lastViewBounds    = null;      // last bounds reported by renderer
-
-function createAutomationTab(column) {
-    if (automationViews.has(column)) return;
-
-    const view = new WebContentsView({
-        webPreferences: { nodeIntegration: false, contextIsolation: true },
-    });
-    mainWindow.contentView.addChildView(view);
-    view.setBounds({ x: 0, y: 0, width: 0, height: 0 }); // hidden until selected
-
-    const sentinel = `AUTOMATION_VIEW_${column}`;
-    view.webContents.loadURL(
-        `data:text/html,<html><head><title>${sentinel}</title></head>` +
-        `<body style="margin:0;background:#0f0f1a;color:#64748b;display:flex;` +
-        `align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:14px">` +
-        `<span>⏳ Initialising Column ${column}…</span></body></html>`
-    );
-
-    view.webContents.on('did-navigate', (_e, url) => {
-        if (activeTabColumn === column && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('automation-view-url', url);
-        }
-    });
-    view.webContents.on('did-navigate-in-page', (_e, url, isMain) => {
-        if (isMain && activeTabColumn === column && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('automation-view-url', url);
-        }
-    });
-
-    automationViews.set(column, view);
-
-    // Auto-show the first tab that opens
-    if (automationViews.size === 1 && lastViewBounds) {
-        activeTabColumn = column;
-        view.setBounds(lastViewBounds);
-    }
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('tab-opened', column);
-    }
-}
-
-function cleanupAutomationViews() {
-    for (const view of automationViews.values()) {
-        try { mainWindow.contentView.removeChildView(view); } catch (_) {}
-    }
-    automationViews.clear();
-    activeTabColumn = null;
-}
 
 function createWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -86,7 +29,6 @@ function createWindow() {
 
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
-        mainWindow.webContents.openDevTools({ mode: 'detach' });
     });
 
     const logFile = path.join(__dirname, '../debug-renderer.log');
@@ -132,7 +74,6 @@ ipcMain.handle('upload-sheet', async (_event, sourcePath) => {
         const dest = path.join(__dirname, '../src/AutoTagSheet.xlsx');
         fs.copyFileSync(sourcePath, dest);
 
-        // Parse the sheet and return all vehicle records
         const ExcelJS = require('exceljs');
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.readFile(dest);
@@ -142,7 +83,6 @@ ipcMain.handle('upload-sheet', async (_event, sourcePath) => {
         const colCount = worksheet.columnCount;
         const rowCount = worksheet.rowCount;
 
-        // getColumnLetter inline (avoids ESM import)
         function colLetter(n) {
             let s = '';
             while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
@@ -190,44 +130,14 @@ ipcMain.handle('save-env', (_event, envObj) => {
     return true;
 });
 
-// Renderer reports where the viewport div is — position the active view there
-ipcMain.handle('set-automation-view-bounds', (_event, bounds) => {
-    lastViewBounds = {
-        x: Math.round(bounds.x), y: Math.round(bounds.y),
-        width: Math.round(bounds.width), height: Math.round(bounds.height),
-    };
-    if (activeTabColumn && automationViews.has(activeTabColumn)) {
-        automationViews.get(activeTabColumn).setBounds(lastViewBounds);
-    }
-});
-
-// Hide all views (when leaving the Automation tab)
-ipcMain.handle('hide-automation-view', () => {
-    for (const view of automationViews.values()) {
-        view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    }
-});
-
-// Switch which column tab is visible
-ipcMain.handle('switch-automation-tab', (_event, column) => {
-    for (const [col, view] of automationViews) {
-        view.setBounds(col === column && lastViewBounds
-            ? lastViewBounds
-            : { x: 0, y: 0, width: 0, height: 0 });
-    }
-    activeTabColumn = column;
-    const url = automationViews.get(column)?.webContents.getURL() || '';
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('automation-view-url', url);
-    }
-});
-
 ipcMain.handle('start-automation', (_event, config) => {
     if (automationProcess) return { error: 'Already running' };
 
-    cleanupAutomationViews();
+    // Run as a standalone headless Playwright process — no CDP, no embedded browser
+    // Clear any stale stop flag from a previous run
+    try { fs.unlinkSync(path.join(__dirname, '../.stop-requested')); } catch (_) {}
 
-    const env = { ...process.env, PLAYWRIGHT_CDP_PORT: '9222' };
+    const env = { ...process.env, PLAYWRIGHT_HEADLESS: 'true' };
     if (config && config.excelPath) env.EXCEL_FILE_PATH = config.excelPath;
 
     const nodeBin = process.execPath;
@@ -245,32 +155,19 @@ ipcMain.handle('start-automation', (_event, config) => {
         while ((idx = stdoutBuf.indexOf('\n')) !== -1) {
             const line = stdoutBuf.slice(0, idx);
             stdoutBuf = stdoutBuf.slice(idx + 1);
-            if (line.startsWith('TAB_OPEN:')) {
-                createAutomationTab(line.slice(9).trim());
-            } else if (line.startsWith('TAB_DONE:')) {
-                const col = line.slice(9).trim();
-                const view = automationViews.get(col);
-                if (view) {
-                    try { mainWindow.contentView.removeChildView(view); } catch (_) {}
-                    automationViews.delete(col);
+            if (line.startsWith('NETWORK_DOWN:')) {
+                const reason = line.slice(13).trim();
+                if (automationProcess) {
+                    try { automationProcess.kill('SIGTERM'); } catch (_) {}
+                    automationProcess = null;
                 }
-                if (activeTabColumn === col) {
-                    // Switch to another open tab, or clear if none left
-                    const next = automationViews.keys().next().value;
-                    activeTabColumn = next || null;
-                    if (next && lastViewBounds) {
-                        automationViews.get(next).setBounds(lastViewBounds);
-                    }
-                }
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send('tab-closed', col);
-                }
+                mainWindow.webContents.send('network-down', { reason });
             } else if (line.startsWith('VEHICLE_RESULT:')) {
                 try {
                     const record = JSON.parse(line.slice(15));
                     mainWindow.webContents.send('vehicle-result', record);
                 } catch (_) {}
-            } else if (line.trim()) {
+            } else if (line.trim() && !line.startsWith('TAB_OPEN:') && !line.startsWith('TAB_DONE:')) {
                 mainWindow.webContents.send('log-line', line + '\n');
             }
         }
@@ -294,9 +191,15 @@ ipcMain.handle('start-automation', (_event, config) => {
 
 ipcMain.handle('stop-automation', () => {
     if (automationProcess) {
-        automationProcess.kill('SIGTERM');
-        automationProcess = null;
-        cleanupAutomationViews();
+        // Write a flag file so the automation stops cleanly after the current group
+        try { fs.writeFileSync(path.join(__dirname, '../.stop-requested'), ''); } catch (_) {}
+        // Force-kill fallback after 3 minutes in case the group hangs
+        setTimeout(() => {
+            if (automationProcess) {
+                try { automationProcess.kill('SIGTERM'); } catch (_) {}
+                automationProcess = null;
+            }
+        }, 180000);
         return { stopped: true };
     }
     return { stopped: false };
@@ -315,7 +218,6 @@ ipcMain.handle('download-records', async (_event, { records, label }) => {
         const workbook = new ExcelJS.Workbook();
         const sheet = workbook.addWorksheet(label);
 
-        // Group records by column letter, preserving sorted column order
         const columnMap = new Map();
         for (const r of records) {
             if (!columnMap.has(r.column)) columnMap.set(r.column, []);
@@ -323,35 +225,59 @@ ipcMain.handle('download-records', async (_event, { records, label }) => {
         }
         const columns = [...columnMap.keys()].sort();
 
-        // Header row: one column per group
         const headerRow = sheet.getRow(1);
         columns.forEach((col, ci) => {
             const cell = headerRow.getCell(ci + 1);
             cell.value = `Column ${col}`;
-            cell.font = { bold: true };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
             cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
             cell.alignment = { horizontal: 'center' };
         });
         headerRow.commit();
 
-        // Data rows: fill each spreadsheet column with vehicles from that group
+        const STATUS_COLOR = {
+            success: 'FF22C55E', // green
+            skipped: 'FFFBBF24', // amber
+            failed:  'FFEF4444', // red
+        };
+
         const maxRows = Math.max(...columns.map(c => columnMap.get(c).length));
         for (let row = 0; row < maxRows; row++) {
             const sheetRow = sheet.getRow(row + 2);
             columns.forEach((col, ci) => {
                 const recs = columnMap.get(col);
                 if (row < recs.length) {
-                    sheetRow.getCell(ci + 1).value = recs[row].vehicle;
+                    const rec  = recs[row];
+                    const cell = sheetRow.getCell(ci + 1);
+                    cell.value = rec.vehicle;
+                    const color = STATUS_COLOR[rec.status];
+                    if (color) {
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+                        cell.font = { color: { argb: 'FF000000' } };
+                    }
                 }
             });
             sheetRow.commit();
         }
 
-        // Auto-width columns
-        columns.forEach((_col, ci) => {
-            sheet.getColumn(ci + 1).width = 18;
+        columns.forEach((_col, ci) => { sheet.getColumn(ci + 1).width = 18; });
+
+        // Legend sheet
+        const legend = workbook.addWorksheet('Legend');
+        [
+            { label: 'Tagged',        color: 'FF22C55E' },
+            { label: 'Already Tagged', color: 'FFFBBF24' },
+            { label: 'Failed',         color: 'FFEF4444' },
+        ].forEach(({ label: lbl, color }, i) => {
+            const row = legend.getRow(i + 1);
+            const swatch = row.getCell(1);
+            swatch.value = '';
+            swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
+            row.getCell(2).value = lbl;
+            row.commit();
         });
+        legend.getColumn(1).width = 6;
+        legend.getColumn(2).width = 18;
 
         await workbook.xlsx.writeFile(filePath);
         return { ok: true, filePath };
@@ -370,3 +296,104 @@ ipcMain.handle('get-history', () => {
 });
 
 ipcMain.handle('is-running', () => automationProcess !== null);
+
+ipcMain.handle('write-retry-sheet', async (_event, { records }) => {
+    try {
+        const dest = path.join(__dirname, '../src/AutoTagSheet.xlsx');
+
+        // Group by original column letter
+        const columnMap = new Map();
+        for (const r of records) {
+            if (!columnMap.has(r.column)) columnMap.set(r.column, []);
+            columnMap.get(r.column).push(r.vehicle);
+        }
+        const columns = [...columnMap.keys()].sort();
+
+        function colIndex(letter) {
+            let n = 0;
+            for (const ch of letter) n = n * 26 + (ch.charCodeAt(0) - 64);
+            return n;
+        }
+
+        const ExcelJS = require('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Vehicles');
+
+        columns.forEach((col, ci) => {
+            const cell = sheet.getRow(1).getCell(ci + 1);
+            cell.value = `Column ${col}`;
+            cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+            cell.alignment = { horizontal: 'center' };
+        });
+        sheet.getRow(1).commit();
+
+        columns.forEach((col, ci) => {
+            const vehicles = columnMap.get(col);
+            vehicles.forEach((v, ri) => {
+                sheet.getRow(ri + 2).getCell(ci + 1).value = v;
+                sheet.getRow(ri + 2).commit();
+            });
+            sheet.getColumn(ci + 1).width = 18;
+        });
+
+        await workbook.xlsx.writeFile(dest);
+
+        // Return records in the same shape as upload-sheet
+        const retryRecords = [];
+        columns.forEach((col, ci) => {
+            columnMap.get(col).forEach((v, ri) => {
+                retryRecords.push({ column: col, vehicle: v, row: ri + 2, status: 'pending', error: null });
+            });
+        });
+
+        return { ok: true, records: retryRecords };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+});
+
+ipcMain.handle('download-template', async () => {
+    try {
+        const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+            title: 'Save Template',
+            defaultPath: 'AutoTagSheet_Template.xlsx',
+            filters: [{ name: 'Excel Files', extensions: ['xlsx'] }],
+        });
+        if (canceled || !filePath) return { ok: false, reason: 'canceled' };
+
+        const ExcelJS = require('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Vehicles');
+
+        // Two sample columns matching expected sheet structure
+        const columns = ['A', 'B'];
+        columns.forEach((col, ci) => {
+            const headerCell = sheet.getRow(1).getCell(ci + 1);
+            headerCell.value = `Column ${col}`;
+            headerCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+            headerCell.alignment = { horizontal: 'center' };
+        });
+        sheet.getRow(1).commit();
+
+        // Sample vehicle numbers in rows 2–4
+        const samples = [
+            ['MH12AB1234', 'DL01CD5678'],
+            ['KA03EF9012', 'TN07GH3456'],
+            ['GJ05IJ7890', ''],
+        ];
+        samples.forEach((rowVals, ri) => {
+            const sheetRow = sheet.getRow(ri + 2);
+            rowVals.forEach((val, ci) => { sheetRow.getCell(ci + 1).value = val; });
+            sheetRow.commit();
+        });
+
+        columns.forEach((_col, ci) => { sheet.getColumn(ci + 1).width = 18; });
+
+        await workbook.xlsx.writeFile(filePath);
+        return { ok: true, filePath };
+    } catch (err) {
+        return { ok: false, reason: err.message };
+    }
+});
