@@ -554,6 +554,9 @@ input:focus { border-color: var(--accent); }
 .btn-tpl { color: var(--accent); border-color: var(--accent); }
 .btn-tpl:hover { background: var(--accent); color: #fff; }
 
+.btn-reset { color: var(--red); border-color: var(--red); }
+.btn-reset:hover { background: var(--red); color: #fff; }
+
 .btn-save {
     padding: 9px 24px;
     background: var(--accent);

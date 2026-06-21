@@ -54,8 +54,16 @@ async function dismissDowntimePopup(page) {
     }
 }
 
+const POLL_ATTEMPTS  = 60;   // max polls before giving up
+const POLL_DELAY_MS  = 4000; // wait between polls
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 /**
- * Navigates through the portal to the vehicle tagging section (ePass)
+ * Navigates to ePass → Request For Vehicle, then polls the New Request tab
+ * until the top row shows a "Take Action" link. Extracts the Permit No from
+ * that row, then navigates to View Request Status and clicks Tag More Vehicle
+ * on the matching row.
  */
 export async function navigateToEpass(page) {
     try {
@@ -65,30 +73,118 @@ export async function navigateToEpass(page) {
         logger.debug('Clicking Request For Vehicle');
         await jsClick(page.locator(SELECTORS.NAVIGATION.REQUEST_FOR_VEHICLE).first(), 'Request For Vehicle');
 
-        logger.debug('Clicking New Request');
-        await jsClick(page.locator(SELECTORS.NAVIGATION.NEW_REQUEST).first(), 'New Request');
+        // Poll New Request tab until Take Action appears on the top row
+        const permitNo = await pollNewRequestForTakeAction(page);
 
-        // Check for no records found
-        const noRecordsFound = page.locator(SELECTORS.NAVIGATION.NO_RECORDS_FOUND);
-        if (await noRecordsFound.isVisible({ timeout: 5000 }).catch(() => false)) {
-            logger.warning('No records found message visible — continuing anyway');
-        }
-
-        logger.debug('Clicking View Request Status');
-        await jsClick(page.locator(SELECTORS.NAVIGATION.VIEW_REQUEST_STATUS).first(), 'View Request Status');
-
-        logger.debug('Clicking Tag More Vehicle');
-        await page.waitForSelector(SELECTORS.NAVIGATION.TAG_MORE_VEHICLE, { state: 'attached', timeout: 15000 });
-        const tagLinks = page.locator(SELECTORS.NAVIGATION.TAG_MORE_VEHICLE);
-        const count = await tagLinks.count();
-        logger.debug(`Found ${count} Tag More Vechile link(s)`);
-
-        const idx = count >= 4 ? 3 : count - 1;
-        await jsClick(tagLinks.nth(idx), `Tag More Vechile [${idx}]`);
+        // Navigate to View Request Status and click Tag More Vehicle for this permit
+        await clickTagMoreVehicleForPermit(page, permitNo);
 
         logger.success('Navigation complete. Ready to process vehicles');
     } catch (error) {
         logger.exception(error, { function: 'navigateToEpass' });
         throw error;
     }
+}
+
+/**
+ * Clicks "New Request" tab and polls until the top data row has a "Take Action"
+ * cell visible. Returns the Permit No extracted from that row.
+ * If no rows exist, re-navigates via ePass → Request For Vehicle and retries.
+ */
+async function pollNewRequestForTakeAction(page) {
+    for (let attempt = 1; attempt <= POLL_ATTEMPTS; attempt++) {
+        logger.info(`New Request poll — attempt ${attempt}/${POLL_ATTEMPTS}`);
+
+        await jsClick(page.locator(SELECTORS.NAVIGATION.NEW_REQUEST).first(), 'New Request tab');
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
+
+        // No rows yet — refresh via ePass menu and retry
+        const noRows = await page.locator(SELECTORS.NAVIGATION.NO_RECORDS_FOUND)
+            .isVisible({ timeout: 3000 }).catch(() => false);
+        if (noRows) {
+            logger.info(`Attempt ${attempt}: No records in New Request — refreshing in ${POLL_DELAY_MS / 1000}s`);
+            await delay(POLL_DELAY_MS);
+            await jsClick(page.locator(SELECTORS.NAVIGATION.EPASS_MENU).first(), 'ePass menu (refresh)');
+            await jsClick(page.locator(SELECTORS.NAVIGATION.REQUEST_FOR_VEHICLE).first(), 'Request For Vehicle (refresh)');
+            continue;
+        }
+
+        // Check if the top data row has "Take Action" in its last cell
+        const hasTakeAction = await page.locator(SELECTORS.NAVIGATION.TAKE_ACTION)
+            .first().isVisible({ timeout: 3000 }).catch(() => false);
+        if (!hasTakeAction) {
+            logger.info(`Attempt ${attempt}: Take Action not visible in top row — refreshing`);
+            await delay(POLL_DELAY_MS);
+            await jsClick(page.locator(SELECTORS.NAVIGATION.EPASS_MENU).first(), 'ePass menu (refresh)');
+            await jsClick(page.locator(SELECTORS.NAVIGATION.REQUEST_FOR_VEHICLE).first(), 'Request For Vehicle (refresh)');
+            continue;
+        }
+
+        // Take Action visible — extract Permit No from the same row
+        const permitNo = await extractPermitNoFromTopRow(page);
+        if (!permitNo) {
+            logger.warning(`Attempt ${attempt}: Could not read Permit No — retrying`);
+            await delay(POLL_DELAY_MS);
+            continue;
+        }
+
+        logger.success(`Take Action found — Permit No: ${permitNo}`);
+        return permitNo;
+    }
+
+    throw new Error(`Take Action not found after ${POLL_ATTEMPTS} poll attempts`);
+}
+
+/**
+ * Reads the Permit No from the first data row of the New Request table.
+ * Looks for a column whose header contains "Permit"; falls back to column index 1
+ * (second column, skipping any serial/checkbox column).
+ */
+async function extractPermitNoFromTopRow(page) {
+    // Find the table that contains "Take Action"
+    const table = page.locator('table').filter({ has: page.locator(SELECTORS.NAVIGATION.TAKE_ACTION) }).first();
+
+    // Resolve permit column index from header
+    let permitColIdx = 1; // safe default
+    const headers = table.locator('thead tr th, tr:first-child th, tr:first-child td');
+    const headerCount = await headers.count().catch(() => 0);
+    for (let i = 0; i < headerCount; i++) {
+        const txt = (await headers.nth(i).textContent().catch(() => '')).trim().toLowerCase();
+        if (txt.includes('permit')) { permitColIdx = i; break; }
+    }
+
+    // Read from the first data row
+    const firstDataRow = table.locator('tbody tr, tr').filter({ has: page.locator(SELECTORS.NAVIGATION.TAKE_ACTION) }).first();
+    const cells = firstDataRow.locator('td');
+    const cellCount = await cells.count().catch(() => 0);
+    if (cellCount === 0) return null;
+
+    const safeIdx = Math.min(permitColIdx, cellCount - 2); // -2 to avoid the Take Action cell itself
+    const val = (await cells.nth(safeIdx).textContent().catch(() => '')).trim();
+    return val || null;
+}
+
+/**
+ * Navigates to View Request Status, locates the row matching the given Permit No,
+ * and clicks its "Tag More Vechile" link.
+ */
+async function clickTagMoreVehicleForPermit(page, permitNo) {
+    logger.debug(`Clicking View Request Status for Permit No: ${permitNo}`);
+    await jsClick(page.locator(SELECTORS.NAVIGATION.VIEW_REQUEST_STATUS).first(), 'View Request Status');
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+
+    // Find the row that contains the permit number
+    const permitRow = page.locator('tr').filter({
+        has: page.locator(`td`).filter({ hasText: new RegExp(`^\\s*${escapeRegex(permitNo)}\\s*$`) }),
+    }).first();
+
+    await permitRow.waitFor({ state: 'visible', timeout: 15000 });
+
+    const tagLink = permitRow.locator('a:has-text("Tag More Vechile")');
+    logger.debug(`Clicking Tag More Vechile on row with Permit No: ${permitNo}`);
+    await jsClick(tagLink.first(), `Tag More Vechile (Permit: ${permitNo})`);
+}
+
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

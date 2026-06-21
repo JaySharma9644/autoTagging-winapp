@@ -20,6 +20,7 @@ export const SELECTORS = {
         NO_RECORDS_FOUND: 'td:has-text("No Record(s) Found...")',
         VIEW_REQUEST_STATUS: 'a:has-text("View Request Status")',
         TAG_MORE_VEHICLE: 'td a:has-text("Tag More Vechile")',
+        TAKE_ACTION: 'td:has-text("Take Action")',
     },
     
     // Vehicle processing selectors

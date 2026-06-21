@@ -47,6 +47,7 @@ const uploadBar      = document.getElementById('uploadBar');
 const uploadFilename = document.getElementById('uploadFilename');
 const btnPickSheet   = document.getElementById('btnPickSheet');
 const btnUploadSheet = document.getElementById('btnUploadSheet');
+const btnReset       = document.getElementById('btnReset');
 
 // Stats
 const statTotal   = document.getElementById('statTotal');
@@ -305,6 +306,7 @@ btnUploadSheet.addEventListener('click', async () => {
         document.querySelector('.upload-hint').textContent = '✓ Uploaded to project — ready to start';
         btnUploadSheet.textContent = '✓ Uploaded';
         btnStart.disabled = false;
+        btnReset.classList.remove('hidden');
 
         // Pre-populate table with all vehicles from the sheet
         state.records = result.records || [];
@@ -319,6 +321,24 @@ btnUploadSheet.addEventListener('click', async () => {
         btnUploadSheet.disabled = false;
         document.querySelector('.upload-hint').textContent = `Upload failed: ${result.error}`;
     }
+});
+
+btnReset.addEventListener('click', () => {
+    pickedSheetPath = null;
+    uploadFilename.textContent = 'No sheet uploaded';
+    document.querySelector('.upload-hint').textContent = 'Upload an Excel sheet before starting';
+    uploadBar.classList.remove('uploaded');
+    btnUploadSheet.textContent = '⬆ Upload';
+    btnUploadSheet.disabled = true;
+    btnReset.classList.add('hidden');
+    btnStart.disabled = true;
+
+    state.records = [];
+    state.stats   = { total: 0, success: 0, skipped: 0, failed: 0 };
+    state.filter  = 'all';
+    renderStats();
+    document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-filter'));
+    renderRecordsPanel();
 });
 
 // ── Controls ──────────────────────────────────────────────────────────────────
